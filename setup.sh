@@ -2,34 +2,33 @@
 
 echo "🔧 BẮT ĐẦU TRIỂN KHAI FLASK API"
 
-# --- HỎI ĐƯỜNG DẪN THƯ MỤC TRIỂN KHAI ---
-read -p "📁 Nhập đường dẫn thư mục (bấm Enter để dùng /home/api_token): " folder_path
-folder_path=${folder_path:-/home/api_token}
+# --- HỎI TÊN THƯ MỤC ---
+read -p "📁 Nhập tên thư mục (bấm Enter để dùng mặc định 'api_token'): " sub_folder
+sub_folder=${sub_folder:-api_token}
+folder_path="/home/$sub_folder"
 
 # --- HỎI TÊN MIỀN ---
 read -p "🌐 Nhập tên miền (ví dụ: api.domain.com): " domain
 
-# --- CÀI ĐẶT CÁC GÓI CẦN THIẾT ---
-echo "📦 Đang cập nhật và cài đặt gói cần thiết..."
-apt update && apt install -y git python3 python3-pip python3-venv nginx certbot python3-certbot-nginx
+# --- CÀI GÓI CẦN THIẾT ---
+apt update && apt install -y git curl python3 python3-pip python3-venv nginx certbot python3-certbot-nginx
 
-# --- TẠO THƯ MỤC VÀ CLONE REPO ---
-echo "📂 Tạo thư mục và tải source code..."
+# --- TẠO THƯ MỤC & TẢI FILE ---
 mkdir -p "$folder_path"
 cd "$folder_path"
-git clone https://github.com/tocongtruong/api_token.git . || { echo "❌ Lỗi clone repo!"; exit 1; }
 
-# --- TẠO VENV & CÀI PYTHON DEPENDENCIES ---
-echo "🐍 Tạo môi trường ảo Python..."
+echo "📥 Tải file từ GitHub..."
+curl -O https://raw.githubusercontent.com/tocongtruong/api_token/main/app.py
+curl -o requirements.txt https://raw.githubusercontent.com/tocongtruong/api_token/main/requirements.txt
+
+# --- TẠO PYTHON VENV & CÀI DEPENDENCIES ---
 python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# --- TẠO GUNICORN SYSTEMD SERVICE ---
-echo "🧩 Tạo service systemd..."
-SERVICE_FILE="/etc/systemd/system/api_token.service"
-cat <<EOF > $SERVICE_FILE
+# --- TẠO SYSTEMD SERVICE ---
+cat <<EOF > /etc/systemd/system/api_token.service
 [Unit]
 Description=Flask API - api_token
 After=network.target
@@ -44,16 +43,13 @@ ExecStart=$folder_path/venv/bin/gunicorn -w 4 -b 127.0.0.1:8000 app:app
 WantedBy=multi-user.target
 EOF
 
-# --- KHỞI ĐỘNG SERVICE ---
 systemctl daemon-reexec
 systemctl daemon-reload
 systemctl enable api_token
 systemctl restart api_token
 
 # --- CẤU HÌNH NGINX ---
-echo "🔧 Cấu hình nginx..."
-NGINX_FILE="/etc/nginx/sites-available/$domain"
-cat <<EOF > $NGINX_FILE
+cat <<EOF > /etc/nginx/sites-available/$domain
 server {
     listen 80;
     server_name $domain;
@@ -67,12 +63,10 @@ server {
 }
 EOF
 
-ln -sf $NGINX_FILE /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/$domain /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 
 # --- CẤP SSL ---
-echo "🔐 Đang cấp chứng chỉ SSL..."
 certbot --nginx -d "$domain" --non-interactive --agree-tos -m your-email@example.com
 
-# --- HOÀN TẤT ---
-echo "✅ Flask API đã triển khai tại: https://$domain"
+echo "✅ ĐÃ TRIỂN KHAI THÀNH CÔNG TẠI: https://$domain"
