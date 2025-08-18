@@ -382,4 +382,4 @@ echo "• Để cập nhật code: cd $PROJECT_PATH && ./manage.sh update"
 echo "• SSL certificate sẽ tự động gia hạn mỗi ngày"
 echo "• Logs nginx: sudo tail -f /var/log/nginx/error.log"
 
-print_status "Deploy hoàn thành! 🎉🔒"
+print_status "Deploy hoàn thành với SSL! 🎉🔒"
