@@ -1,630 +1,385 @@
 #!/bin/bash
 
-# One Command Flask App Deployment Script
-# Usage: curl -s https://raw.githubusercontent.com/tocongtruong/api_token/main/deploy.sh | sudo bash
-
-set -e
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
 # Function to print colored output
-print_message() {
+print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-print_header() {
-    echo -e "${BLUE}================================${NC}"
-    echo -e "${BLUE} $1 ${NC}"
-    echo -e "${BLUE}================================${NC}"
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
-# Check if running as root
-check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        print_error "Vui lòng chạy script này với quyền root (sudo)"
+print_info() {
+    echo -e "${BLUE}[INPUT]${NC} $1"
+}
+
+# Welcome message
+echo -e "${GREEN}"
+echo "================================================"
+echo "    Flask API Token Deployment Script with SSL"
+echo "================================================"
+echo -e "${NC}"
+
+# Get user inputs
+print_info "Nhập tên thư mục (sẽ tạo tại /home/\$USER/):"
+read -p "Tên thư mục: " PROJECT_NAME
+
+if [ -z "$PROJECT_NAME" ]; then
+    print_error "Tên thư mục không được để trống!"
+    exit 1
+fi
+
+print_info "Nhập domain của VPS (ví dụ: api.example.com):"
+print_warning "Lưu ý: Phải là domain thật đã trỏ về IP VPS để cài SSL"
+read -p "Domain: " DOMAIN
+
+if [ -z "$DOMAIN" ]; then
+    print_error "Domain không được để trống!"
+    exit 1
+fi
+
+print_info "Bạn có muốn cài đặt SSL với Let's Encrypt? (y/n) [y]:"
+read -p "SSL: " INSTALL_SSL
+INSTALL_SSL=${INSTALL_SSL:-y}
+
+if [[ "$INSTALL_SSL" =~ ^[Yy]$ ]]; then
+    print_info "Nhập email để đăng ký SSL certificate:"
+    read -p "Email: " SSL_EMAIL
+    
+    if [ -z "$SSL_EMAIL" ]; then
+        print_error "Email không được để trống khi cài SSL!"
         exit 1
     fi
-}
+fi
 
-# Force interactive mode - make stdin available
-force_interactive() {
-    # If running via pipe, we need to reconnect to terminal
-    if [ ! -t 0 ]; then
-        exec < /dev/tty
-    fi
-}
+print_info "Nhập port để chạy ứng dụng (mặc định: 5000):"
+read -p "Port [5000]: " APP_PORT
+APP_PORT=${APP_PORT:-5000}
 
-# Get user inputs - ALWAYS interactive
-get_user_inputs() {
-    print_header "THÔNG TIN CẤU HÌNH"
-    
-    # Force interactive mode
-    force_interactive
-    
-    print_message "Vui lòng nhập thông tin cấu hình cho Flask app:"
-    echo ""
-    
-    # App Name
-    while true; do
-        read -p "📁 Nhập tên thư mục app (sẽ tạo tại /home/): " APP_NAME
-        if [[ -n "$APP_NAME" && "$APP_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            APP_DIR="/home/$APP_NAME"
-            break
-        else
-            print_error "Tên app không hợp lệ. Chỉ được chứa chữ, số, dấu gạch ngang và gạch dưới."
-        fi
-    done
-    
-    # Domain Name
-    while true; do
-        read -p "🌐 Nhập domain name (ví dụ: example.com): " DOMAIN_NAME
-        if [[ -n "$DOMAIN_NAME" ]]; then
-            break
-        else
-            print_error "Domain không được để trống."
-        fi
-    done
-    
-    # Email
-    while true; do
-        read -p "📧 Nhập email cho Let's Encrypt SSL: " EMAIL
-        if [[ -n "$EMAIL" && "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
-            break
-        else
-            print_error "Email không hợp lệ."
-        fi
-    done
-    
-    # Flask Port
-    while true; do
-        read -p "🔌 Nhập port cho Flask app (mặc định 5000): " FLASK_PORT
-        FLASK_PORT=${FLASK_PORT:-5000}
-        if [[ "$FLASK_PORT" =~ ^[0-9]+$ ]] && [ "$FLASK_PORT" -ge 1024 ] && [ "$FLASK_PORT" -le 65535 ]; then
-            break
-        else
-            print_error "Port phải là số từ 1024 đến 65535."
-            FLASK_PORT=""
-        fi
-    done
-    
-    # Service User
-    while true; do
-        read -p "👤 Nhập username cho service (mặc định: $APP_NAME-user): " SERVICE_USER
-        SERVICE_USER=${SERVICE_USER:-"$APP_NAME-user"}
-        if [[ "$SERVICE_USER" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-            break
-        else
-            print_error "Username không hợp lệ."
-            SERVICE_USER=""
-        fi
-    done
-    
-    # Workers
-    while true; do
-        read -p "⚙️  Số lượng Gunicorn workers (mặc định 3): " WORKERS
-        WORKERS=${WORKERS:-3}
-        if [[ "$WORKERS" =~ ^[0-9]+$ ]] && [ "$WORKERS" -ge 1 ] && [ "$WORKERS" -le 10 ]; then
-            break
-        else
-            print_error "Số workers phải từ 1 đến 10."
-            WORKERS=""
-        fi
-    done
-    
-    echo ""
-    print_message "📋 Thông tin cấu hình đã nhập:"
-    echo "  - App Name: $APP_NAME"
-    echo "  - App Directory: $APP_DIR"
-    echo "  - Domain: $DOMAIN_NAME"
-    echo "  - Email: $EMAIL"
-    echo "  - Flask Port: $FLASK_PORT"
-    echo "  - Service User: $SERVICE_USER"
-    echo "  - Workers: $WORKERS"
-    echo ""
-    
-    while true; do
-        read -p "✅ Xác nhận triển khai với cấu hình trên? (y/n): " confirm
-        case $confirm in
-            [Yy]* ) break;;
-            [Nn]* ) 
-                print_error "Đã hủy bỏ triển khai."
-                exit 1;;
-            * ) print_warning "Vui lòng nhập 'y' để tiếp tục hoặc 'n' để hủy.";;
-        esac
-    done
-}
+# Set variables
+PROJECT_PATH="/home/$USER/$PROJECT_NAME"
+GIT_REPO="https://github.com/tocongtruong/api_token.git"
+SERVICE_NAME="flask-$PROJECT_NAME"
+
+print_status "Bắt đầu quá trình deploy..."
+print_status "Thư mục: $PROJECT_PATH"
+print_status "Domain: $DOMAIN"
+print_status "Port: $APP_PORT"
+print_status "SSL: $([[ "$INSTALL_SSL" =~ ^[Yy]$ ]] && echo "Có" || echo "Không")"
 
 # Update system
-update_system() {
-    print_header "CẬP NHẬT HỆ THỐNG"
-    export DEBIAN_FRONTEND=noninteractive
-    apt update -y
-    apt upgrade -y
-    print_message "Hệ thống đã được cập nhật"
-}
+print_status "Cập nhật hệ thống..."
+sudo apt update && sudo apt upgrade -y
 
 # Install required packages
-install_packages() {
-    print_header "CÀI ĐẶT PACKAGES"
-    export DEBIAN_FRONTEND=noninteractive
-    apt install -y python3 python3-pip python3-venv nginx git certbot python3-certbot-nginx ufw curl wget unzip software-properties-common
-    
-    # Install latest Python if needed
-    if ! python3 --version | grep -q "3\.[8-9]\|3\.1[0-9]"; then
-        add-apt-repository ppa:deadsnakes/ppa -y
-        apt update -y
-        apt install -y python3.9 python3.9-venv python3.9-dev
-    fi
-    
-    print_message "Đã cài đặt packages"
-}
+print_status "Cài đặt các gói cần thiết..."
+sudo apt install -y python3 python3-pip python3-venv git nginx ufw
 
-# Create user if not exists
-create_user() {
-    print_header "TẠO USER"
-    if id "$SERVICE_USER" &>/dev/null; then
-        print_warning "User $SERVICE_USER đã tồn tại"
-    else
-        useradd -m -s /bin/bash "$SERVICE_USER" || true
-        usermod -aG www-data "$SERVICE_USER" || true
-        print_message "Đã tạo user $SERVICE_USER"
-    fi
-}
+# Install Certbot for SSL
+if [[ "$INSTALL_SSL" =~ ^[Yy]$ ]]; then
+    print_status "Cài đặt Certbot cho SSL..."
+    sudo apt install -y certbot python3-certbot-nginx
+fi
 
-# Setup app directory
-setup_app_directory() {
-    print_header "THIẾT LẬP APP"
-    
-    APP_DIR="/home/$APP_NAME"
-    mkdir -p "$APP_DIR"
-    cd "$APP_DIR"
-    
-    # Clone repository
-    if [ -d ".git" ]; then
-        print_message "Repository đã tồn tại, đang pull..."
-        git pull origin main || git pull origin master || true
-    else
-        print_message "Đang clone repository..."
-        git clone https://github.com/tocongtruong/api_token.git . || {
-            print_error "Không thể clone repository"
-            exit 1
-        }
-    fi
-    
-    # Set permissions
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$APP_DIR"
-    print_message "Đã setup app directory"
-}
+# Configure firewall
+print_status "Cấu hình firewall..."
+sudo ufw --force reset
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow ssh
+sudo ufw allow 'Nginx Full'
+sudo ufw --force enable
 
-# Setup Python environment
-setup_python_env() {
-    print_header "THIẾT LẬP PYTHON ENV"
-    
-    cd "$APP_DIR"
-    
-    # Create virtual environment
-    sudo -u "$SERVICE_USER" python3 -m venv venv
-    
-    # Upgrade pip and install packages
-    sudo -u "$SERVICE_USER" "$APP_DIR/venv/bin/pip" install --upgrade pip
-    sudo -u "$SERVICE_USER" "$APP_DIR/venv/bin/pip" install gunicorn
-    
-    # Install requirements if exists
-    if [ -f "requirements.txt" ]; then
-        sudo -u "$SERVICE_USER" "$APP_DIR/venv/bin/pip" install -r requirements.txt
-        print_message "Đã cài requirements.txt"
-    else
-        print_warning "Không tìm thấy requirements.txt, cài packages cơ bản..."
-        sudo -u "$SERVICE_USER" "$APP_DIR/venv/bin/pip" install flask requests
-    fi
-    
-    print_message "Đã setup Python environment"
-}
+# Create project directory
+print_status "Tạo thư mục dự án..."
+if [ -d "$PROJECT_PATH" ]; then
+    print_warning "Thư mục đã tồn tại. Xóa và tạo mới..."
+    rm -rf "$PROJECT_PATH"
+fi
+mkdir -p "$PROJECT_PATH"
+cd "$PROJECT_PATH"
 
-# Create Gunicorn config
-create_gunicorn_config() {
-    print_header "TẠO GUNICORN CONFIG"
-    
-    # Create log directories
-    mkdir -p /var/log/gunicorn
-    mkdir -p /var/run/gunicorn
-    chown -R "$SERVICE_USER:$SERVICE_USER" /var/log/gunicorn
-    chown -R "$SERVICE_USER:$SERVICE_USER" /var/run/gunicorn
-    
-    cat > "$APP_DIR/gunicorn.conf.py" << EOF
-import multiprocessing
+# Clone repository
+print_status "Clone repository từ GitHub..."
+git clone "$GIT_REPO" .
 
-bind = "127.0.0.1:$FLASK_PORT"
-workers = $WORKERS
+# Create virtual environment
+print_status "Tạo virtual environment..."
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+print_status "Cài đặt dependencies..."
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Create gunicorn config
+print_status "Tạo file cấu hình Gunicorn..."
+cat > gunicorn_config.py << EOF
+bind = "127.0.0.1:$APP_PORT"
+workers = 2
 worker_class = "sync"
-worker_connections = 1000
+timeout = 120
 max_requests = 1000
-max_requests_jitter = 100
-timeout = 30
-keepalive = 2
 preload_app = True
-daemon = False
-user = "$SERVICE_USER"
-group = "$SERVICE_USER"
-pidfile = "/var/run/gunicorn/$APP_NAME.pid"
-errorlog = "/var/log/gunicorn/$APP_NAME.error.log"
-accesslog = "/var/log/gunicorn/$APP_NAME.access.log"
-loglevel = "info"
+user = "$USER"
+group = "www-data"
 EOF
-    
-    chown "$SERVICE_USER:$SERVICE_USER" "$APP_DIR/gunicorn.conf.py"
-    print_message "Đã tạo Gunicorn config"
-}
 
 # Create systemd service
-create_systemd_service() {
-    print_header "TẠO SYSTEMD SERVICE"
-    
-    cat > "/etc/systemd/system/$APP_NAME.service" << EOF
+print_status "Tạo systemd service..."
+sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << EOF
 [Unit]
-Description=$APP_NAME Flask Application
+Description=Flask API Token Generator
 After=network.target
 
 [Service]
-Type=notify
-User=$SERVICE_USER
-Group=$SERVICE_USER
-RuntimeDirectory=gunicorn
-WorkingDirectory=$APP_DIR
-Environment=PATH=$APP_DIR/venv/bin
-ExecStart=$APP_DIR/venv/bin/gunicorn --config gunicorn.conf.py app:app
-ExecReload=/bin/kill -s HUP \$MAINPID
+User=$USER
+Group=www-data
+WorkingDirectory=$PROJECT_PATH
+Environment="PATH=$PROJECT_PATH/venv/bin"
+ExecStart=$PROJECT_PATH/venv/bin/gunicorn --config gunicorn_config.py app:app
 Restart=always
 RestartSec=3
-KillMode=mixed
-TimeoutStopSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    
-    systemctl daemon-reload
-    systemctl enable "$APP_NAME.service"
-    print_message "Đã tạo systemd service"
-}
 
-# Configure Nginx
-configure_nginx() {
-    print_header "CẤU HÌNH NGINX"
-    
-    # Backup original config
-    cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup 2>/dev/null || true
-    
-    # Remove default site
-    rm -f /etc/nginx/sites-enabled/default
-    
-    # Create Nginx configuration
-    cat > "/etc/nginx/sites-available/$APP_NAME" << EOF
+# Create nginx config (HTTP first)
+print_status "Tạo cấu hình Nginx..."
+sudo tee /etc/nginx/sites-available/$SERVICE_NAME > /dev/null << EOF
 server {
     listen 80;
-    server_name $DOMAIN_NAME www.$DOMAIN_NAME;
-    
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-    
-    location / {
-        return 301 https://\$server_name\$request_uri;
-    }
-}
+    server_name $DOMAIN;
 
-server {
-    listen 443 ssl http2;
-    server_name $DOMAIN_NAME www.$DOMAIN_NAME;
-    
-    # SSL configuration (will be updated by certbot)
-    ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
-    ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
-    
-    # Security headers
-    add_header X-Frame-Options DENY;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-XSS-Protection "1; mode=block";
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    
-    # Gzip compression
-    gzip on;
-    gzip_vary on;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
-    
     location / {
-        proxy_pass http://127.0.0.1:$FLASK_PORT;
+        proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         
+        # Increase timeout for long requests
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
         proxy_read_timeout 60s;
     }
-    
-    location /static {
-        alias $APP_DIR/static;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-    
-    location /health {
-        access_log off;
-        return 200 "OK";
-        add_header Content-Type text/plain;
-    }
 }
 EOF
-    
-    # Enable site
-    ln -sf "/etc/nginx/sites-available/$APP_NAME" "/etc/nginx/sites-enabled/"
-    
-    # Test configuration
-    nginx -t || {
-        print_error "Nginx configuration error"
-        cat "/etc/nginx/sites-available/$APP_NAME"
-        exit 1
-    }
-    
-    print_message "Đã cấu hình Nginx"
-}
 
-# Setup basic SSL (will be replaced by Let's Encrypt later)
-setup_basic_ssl() {
-    print_header "THIẾT LẬP SSL CƠ BẢN"
-    
-    # Create self-signed certificate for initial setup
-    if [ ! -f "/etc/ssl/certs/ssl-cert-snakeoil.pem" ]; then
-        make-ssl-cert generate-default-snakeoil --force-overwrite
-    fi
-    
-    print_message "Đã tạo SSL certificate tạm thời"
-}
+# Remove default nginx site
+sudo rm -f /etc/nginx/sites-enabled/default
 
-# Setup Let's Encrypt SSL
-setup_letsencrypt() {
-    print_header "THIẾT LẬP LET'S ENCRYPT SSL"
+# Enable nginx site
+print_status "Kích hoạt site Nginx..."
+sudo ln -sf /etc/nginx/sites-available/$SERVICE_NAME /etc/nginx/sites-enabled/
+sudo nginx -t
+
+if [ $? -eq 0 ]; then
+    print_status "Cấu hình Nginx hợp lệ"
+else
+    print_error "Cấu hình Nginx có lỗi!"
+    exit 1
+fi
+
+# Set permissions
+print_status "Thiết lập quyền..."
+sudo chown -R $USER:www-data "$PROJECT_PATH"
+sudo chmod -R 755 "$PROJECT_PATH"
+
+# Start services
+print_status "Khởi động các dịch vụ..."
+
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable and start flask service
+sudo systemctl enable $SERVICE_NAME
+sudo systemctl start $SERVICE_NAME
+
+# Restart nginx
+sudo systemctl restart nginx
+
+# Wait for services to start
+sleep 5
+
+# Check service status
+print_status "Kiểm tra trạng thái dịch vụ..."
+
+if sudo systemctl is-active --quiet $SERVICE_NAME; then
+    print_status "✅ Flask service đang chạy"
+else
+    print_error "❌ Flask service không chạy được"
+    print_error "Kiểm tra log: sudo journalctl -u $SERVICE_NAME -f"
+    exit 1
+fi
+
+if sudo systemctl is-active --quiet nginx; then
+    print_status "✅ Nginx đang chạy"
+else
+    print_error "❌ Nginx không chạy được"
+    exit 1
+fi
+
+# Install SSL if requested
+if [[ "$INSTALL_SSL" =~ ^[Yy]$ ]]; then
+    print_status "Cài đặt SSL certificate..."
     
-    # Start services first
-    systemctl start "$APP_NAME.service"
-    systemctl restart nginx
-    
-    # Wait a bit for services to start
-    sleep 5
-    
-    # Get SSL certificate
-    if [[ "$DOMAIN_NAME" != "your-domain.com" && "$DOMAIN_NAME" != "localhost" ]]; then
-        certbot --nginx -d "$DOMAIN_NAME" -d "www.$DOMAIN_NAME" \
-            --email "$EMAIL" \
-            --agree-tos \
-            --non-interactive \
-            --redirect || {
-            print_warning "SSL certificate setup failed. Continuing with self-signed certificate."
-        }
+    # Test domain connectivity
+    print_status "Kiểm tra kết nối domain..."
+    if curl -s --connect-timeout 10 "http://$DOMAIN" > /dev/null; then
+        print_status "Domain có thể truy cập được"
         
-        # Setup auto-renewal
-        (crontab -l 2>/dev/null; echo "0 12 * * * /usr/bin/certbot renew --quiet") | crontab -
+        # Get SSL certificate
+        print_status "Đang lấy SSL certificate từ Let's Encrypt..."
+        sudo certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$SSL_EMAIL" --redirect
+        
+        if [ $? -eq 0 ]; then
+            print_status "✅ SSL certificate đã được cài đặt thành công"
+            
+            # Setup auto-renewal
+            print_status "Thiết lập auto-renewal cho SSL..."
+            echo "0 12 * * * /usr/bin/certbot renew --quiet" | sudo crontab -
+            
+            PROTOCOL="https"
+        else
+            print_error "❌ Không thể cài đặt SSL certificate"
+            print_warning "Tiếp tục với HTTP..."
+            PROTOCOL="http"
+        fi
     else
-        print_warning "Domain mặc định được sử dụng. Vui lòng cập nhật domain thực và chạy lại SSL setup."
+        print_error "❌ Không thể kết nối đến domain $DOMAIN"
+        print_warning "Vui lòng kiểm tra DNS record và thử lại sau"
+        print_warning "Tiếp tục với HTTP..."
+        PROTOCOL="http"
     fi
-    
-    print_message "Đã thiết lập SSL"
-}
+else
+    PROTOCOL="http"
+fi
 
-# Configure firewall
-setup_firewall() {
-    print_header "CẤU HÌNH FIREWALL"
-    
-    # Enable UFW if not enabled
-    ufw --force reset
-    ufw default deny incoming
-    ufw default allow outgoing
-    
-    # Allow essential services
-    ufw allow ssh
-    ufw allow 'Nginx Full'
-    
-    # Enable firewall
-    ufw --force enable
-    
-    print_message "Đã cấu hình firewall"
-}
+# Test the API
+print_status "Kiểm tra API..."
+sleep 3
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$APP_PORT/")
 
-# Create management scripts
-create_management_scripts() {
-    print_header "TẠO MANAGEMENT SCRIPTS"
-    
-    # Create scripts directory
-    mkdir -p /usr/local/bin
-    
-    # Status script
-    cat > "/usr/local/bin/${APP_NAME}-status" << EOF
+if [ "$HTTP_CODE" = "200" ]; then
+    print_status "✅ API đang hoạt động"
+else
+    print_warning "⚠️  API có thể chưa sẵn sàng (HTTP Code: $HTTP_CODE)"
+fi
+
+# Create management script
+print_status "Tạo script quản lý..."
+cat > "$PROJECT_PATH/manage.sh" << EOF
 #!/bin/bash
-echo "=== $APP_NAME Service Status ==="
-systemctl status $APP_NAME.service
-echo ""
-echo "=== Nginx Status ==="
-systemctl status nginx
-echo ""
-echo "=== Listening Ports ==="
-ss -tlnp | grep :$FLASK_PORT
-ss -tlnp | grep :80
-ss -tlnp | grep :443
+
+case "\$1" in
+    start)
+        sudo systemctl start $SERVICE_NAME
+        echo "Service started"
+        ;;
+    stop)
+        sudo systemctl stop $SERVICE_NAME
+        echo "Service stopped"
+        ;;
+    restart)
+        sudo systemctl restart $SERVICE_NAME
+        echo "Service restarted"
+        ;;
+    status)
+        sudo systemctl status $SERVICE_NAME
+        ;;
+    logs)
+        sudo journalctl -u $SERVICE_NAME -f
+        ;;
+    update)
+        cd $PROJECT_PATH
+        git pull
+        source venv/bin/activate
+        pip install -r requirements.txt
+        sudo systemctl restart $SERVICE_NAME
+        echo "Application updated and restarted"
+        ;;
+    ssl-renew)
+        sudo certbot renew
+        sudo systemctl reload nginx
+        echo "SSL certificate renewed"
+        ;;
+    ssl-status)
+        sudo certbot certificates
+        ;;
+    *)
+        echo "Usage: \$0 {start|stop|restart|status|logs|update|ssl-renew|ssl-status}"
+        exit 1
+        ;;
+esac
 EOF
-    
-    # Restart script
-    cat > "/usr/local/bin/${APP_NAME}-restart" << EOF
+
+chmod +x "$PROJECT_PATH/manage.sh"
+
+# Create SSL renewal script
+if [[ "$INSTALL_SSL" =~ ^[Yy]$ ]]; then
+    cat > "$PROJECT_PATH/ssl-check.sh" << EOF
 #!/bin/bash
-echo "Restarting $APP_NAME..."
-systemctl restart $APP_NAME.service
-systemctl restart nginx
-echo "Done!"
-${APP_NAME}-status
+# Check SSL certificate expiry and renew if needed
+/usr/bin/certbot renew --quiet
+if [ \$? -eq 0 ]; then
+    /bin/systemctl reload nginx
+fi
 EOF
-    
-    # Update script
-    cat > "/usr/local/bin/${APP_NAME}-update" << EOF
-#!/bin/bash
-echo "Updating $APP_NAME..."
-cd $APP_DIR
-systemctl stop $APP_NAME.service
-sudo -u $SERVICE_USER git pull origin main
-sudo -u $SERVICE_USER $APP_DIR/venv/bin/pip install -r requirements.txt
-systemctl start $APP_NAME.service
-systemctl restart nginx
-echo "Update completed!"
-${APP_NAME}-status
-EOF
-    
-    # Logs script
-    cat > "/usr/local/bin/${APP_NAME}-logs" << EOF
-#!/bin/bash
-echo "=== Application Logs ==="
-journalctl -u $APP_NAME.service -f --no-pager
-EOF
-    
-    # SSL renewal script
-    cat > "/usr/local/bin/${APP_NAME}-ssl-renew" << EOF
-#!/bin/bash
-echo "Renewing SSL certificate..."
-certbot --nginx -d $DOMAIN_NAME -d www.$DOMAIN_NAME --email $EMAIL --agree-tos --non-interactive --redirect
-systemctl restart nginx
-echo "SSL renewal completed!"
-EOF
-    
-    # Make all scripts executable
-    chmod +x /usr/local/bin/${APP_NAME}-*
-    
-    print_message "Đã tạo management scripts"
-}
+    chmod +x "$PROJECT_PATH/ssl-check.sh"
+fi
 
-# Final setup
-final_setup() {
-    print_header "HOÀN THIỆN SETUP"
-    
-    # Start services
-    systemctl daemon-reload
-    systemctl restart "$APP_NAME.service"
-    systemctl restart nginx
-    
-    # Wait for services to start
-    sleep 3
-    
-    # Check service status
-    if systemctl is-active --quiet "$APP_NAME.service"; then
-        print_message "✅ $APP_NAME service đang chạy"
-    else
-        print_error "❌ $APP_NAME service lỗi"
-        journalctl -u "$APP_NAME.service" --no-pager -n 10
-    fi
-    
-    if systemctl is-active --quiet nginx; then
-        print_message "✅ Nginx đang chạy"
-    else
-        print_error "❌ Nginx lỗi"
-    fi
-    
-    # Test app
-    if curl -s http://localhost:$FLASK_PORT > /dev/null; then
-        print_message "✅ Flask app phản hồi"
-    else
-        print_warning "⚠️ Flask app không phản hồi, kiểm tra logs"
-    fi
-    
-    print_message "Setup hoàn tất!"
-}
+# Final summary
+echo -e "${GREEN}"
+echo "================================================"
+echo "           DEPLOY HOÀN THÀNH!"
+echo "================================================"
+echo -e "${NC}"
 
-# Show final information
-show_final_info() {
-    print_header "THÔNG TIN TRIỂN KHAI"
-    
-    echo -e "${GREEN}🎉 Flask App đã được deploy thành công!${NC}"
-    echo ""
-    echo -e "${BLUE}📋 Thông tin cấu hình:${NC}"
-    echo "  📁 App Directory: $APP_DIR"
-    echo "  🌐 Domain: https://$DOMAIN_NAME"
-    echo "  👤 Service User: $SERVICE_USER"
-    echo "  🔧 Service Name: $APP_NAME.service"
-    echo "  📡 Port: $FLASK_PORT"
-    echo ""
-    echo -e "${BLUE}🛠️ Management Commands:${NC}"
-    echo "  ${APP_NAME}-status     - Kiểm tra trạng thái"
-    echo "  ${APP_NAME}-restart    - Khởi động lại"
-    echo "  ${APP_NAME}-update     - Cập nhật từ git"
-    echo "  ${APP_NAME}-logs       - Xem logs"
-    echo "  ${APP_NAME}-ssl-renew  - Gia hạn SSL"
-    echo ""
-    echo -e "${BLUE}📊 Systemctl Commands:${NC}"
-    echo "  systemctl status $APP_NAME.service"
-    echo "  systemctl restart $APP_NAME.service"
-    echo "  journalctl -u $APP_NAME.service -f"
-    echo ""
-    echo -e "${BLUE}📝 Log Files:${NC}"
-    echo "  App: journalctl -u $APP_NAME.service"
-    echo "  Nginx: /var/log/nginx/"
-    echo "  Gunicorn: /var/log/gunicorn/"
-    echo ""
-    echo -e "${YELLOW}⚠️ Lưu ý quan trọng:${NC}"
-    if [[ "$DOMAIN_NAME" == "your-domain.com" ]]; then
-        echo "  🔴 DOMAIN: Cần thay đổi domain trong cấu hình Nginx"
-        echo "     Sửa file: /etc/nginx/sites-available/$APP_NAME"
-        echo "     Sau đó chạy: ${APP_NAME}-ssl-renew"
-    fi
-    if [[ "$EMAIL" == "admin@your-domain.com" ]]; then
-        echo "  🔴 EMAIL: Cần cập nhật email cho SSL certificate"
-    fi
-    echo "  ✅ App tự động khởi động khi reboot"
-    echo "  ✅ SSL certificate tự động gia hạn (nếu domain hợp lệ)"
-    echo "  ✅ Firewall đã được cấu hình"
-    echo ""
-    echo -e "${GREEN}🚀 Truy cập app:${NC}"
-    echo "  HTTP:  http://$DOMAIN_NAME"
-    echo "  HTTPS: https://$DOMAIN_NAME"
-    echo "  Local: http://localhost:$FLASK_PORT"
-    echo ""
-    echo -e "${GREEN}✨ Deploy hoàn tất! Happy coding! ✨${NC}"
-}
+print_status "📁 Thư mục dự án: $PROJECT_PATH"
+print_status "🌐 Domain: $DOMAIN"
+print_status "🔗 URL API: $PROTOCOL://$DOMAIN"
+print_status "🔗 Test endpoint: $PROTOCOL://$DOMAIN/get-token?cookie=YOUR_COOKIE"
+print_status "📊 Port ứng dụng: $APP_PORT"
+print_status "🔧 Service name: $SERVICE_NAME"
+print_status "🔒 SSL: $([[ "$INSTALL_SSL" =~ ^[Yy]$ ]] && echo "Đã cài đặt" || echo "Chưa cài đặt")"
 
-# Main execution
-main() {
-    print_header "FLASK APP ONE-COMMAND DEPLOY"
-    
-    check_root
-    get_user_inputs
-    update_system
-    install_packages
-    create_user
-    setup_app_directory
-    setup_python_env
-    create_gunicorn_config
-    create_systemd_service
-    configure_nginx
-    setup_basic_ssl
-    setup_firewall
-    create_management_scripts
-    final_setup
-    setup_letsencrypt  # SSL setup after services are running
-    show_final_info
-}
+echo -e "\n${BLUE}Các lệnh quản lý:${NC}"
+echo "• Khởi động: sudo systemctl start $SERVICE_NAME"
+echo "• Dừng: sudo systemctl stop $SERVICE_NAME"
+echo "• Khởi động lại: sudo systemctl restart $SERVICE_NAME"
+echo "• Xem trạng thái: sudo systemctl status $SERVICE_NAME"
+echo "• Xem log: sudo journalctl -u $SERVICE_NAME -f"
+echo "• Script quản lý: $PROJECT_PATH/manage.sh {start|stop|restart|status|logs|update}"
 
-# Trap errors
-trap 'print_error "Script failed at line $LINENO"' ERR
+if [[ "$INSTALL_SSL" =~ ^[Yy]$ ]]; then
+    echo -e "\n${BLUE}Lệnh SSL:${NC}"
+    echo "• Gia hạn SSL: $PROJECT_PATH/manage.sh ssl-renew"
+    echo "• Kiểm tra SSL: $PROJECT_PATH/manage.sh ssl-status"
+    echo "• SSL auto-renewal đã được thiết lập"
+fi
 
-# Run main function
-main "$@"
+echo -e "\n${BLUE}Kiểm tra firewall:${NC}"
+echo "• Xem trạng thái: sudo ufw status"
+echo "• Ports đã mở: SSH, HTTP (80), HTTPS (443)"
+
+echo -e "\n${YELLOW}Ghi chú:${NC}"
+echo "• API endpoint: $PROTOCOL://$DOMAIN/get-token?cookie=YOUR_COOKIE"
+echo "• Để cập nhật code: cd $PROJECT_PATH && ./manage.sh update"
+echo "• SSL certificate sẽ tự động gia hạn mỗi ngày"
+echo "• Logs nginx: sudo tail -f /var/log/nginx/error.log"
+
+print_status "Deploy hoàn thành! 🎉🔒"
