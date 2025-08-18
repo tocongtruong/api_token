@@ -39,68 +39,112 @@ check_root() {
     fi
 }
 
-# Function to get input with timeout (for piped execution)
-get_input() {
-    local prompt="$1"
-    local default="$2"
-    local timeout="$3"
-    
-    if [ -t 0 ]; then
-        # Interactive mode
-        read -p "$prompt" input
-    else
-        # Non-interactive mode, use timeout
-        read -t ${timeout:-10} -p "$prompt" input 2>/dev/null || true
+# Force interactive mode - make stdin available
+force_interactive() {
+    # If running via pipe, we need to reconnect to terminal
+    if [ ! -t 0 ]; then
+        exec < /dev/tty
     fi
-    
-    echo "${input:-$default}"
 }
 
-# Get user inputs with defaults for non-interactive mode
+# Get user inputs - ALWAYS interactive
 get_user_inputs() {
     print_header "THÔNG TIN CẤU HÌNH"
     
-    # Check if running interactively
-    if [ ! -t 0 ]; then
-        print_warning "Chạy ở chế độ non-interactive, sử dụng cấu hình mặc định..."
-        
-        # Default configuration for non-interactive mode
-        APP_NAME="flask-api"
-        DOMAIN_NAME="your-domain.com"
-        EMAIL="admin@your-domain.com"
-        FLASK_PORT="5000"
-        SERVICE_USER="flask-user"
-        WORKERS="3"
-        
-        print_message "Sử dụng cấu hình mặc định:"
-        echo "  - App Name: $APP_NAME"
-        echo "  - Domain: $DOMAIN_NAME (BẠN CẦN SỬA SAU)"
-        echo "  - Email: $EMAIL (BẠN CẦN SỬA SAU)"
-        echo "  - Flask Port: $FLASK_PORT"
-        echo "  - Service User: $SERVICE_USER"
-        echo "  - Workers: $WORKERS"
-        
-        sleep 3
-        return
-    fi
+    # Force interactive mode
+    force_interactive
     
-    # Interactive mode
-    APP_NAME=$(get_input "Nhập tên app (mặc định flask-api): " "flask-api" 10)
-    APP_DIR="/home/$APP_NAME"
+    print_message "Vui lòng nhập thông tin cấu hình cho Flask app:"
+    echo ""
     
-    DOMAIN_NAME=$(get_input "Nhập domain (mặc định your-domain.com): " "your-domain.com" 10)
-    EMAIL=$(get_input "Nhập email (mặc định admin@$DOMAIN_NAME): " "admin@$DOMAIN_NAME" 10)
-    FLASK_PORT=$(get_input "Port Flask (mặc định 5000): " "5000" 10)
-    SERVICE_USER=$(get_input "Service user (mặc định flask-user): " "flask-user" 10)
-    WORKERS=$(get_input "Số workers (mặc định 3): " "3" 10)
+    # App Name
+    while true; do
+        read -p "📁 Nhập tên thư mục app (sẽ tạo tại /home/): " APP_NAME
+        if [[ -n "$APP_NAME" && "$APP_NAME" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            APP_DIR="/home/$APP_NAME"
+            break
+        else
+            print_error "Tên app không hợp lệ. Chỉ được chứa chữ, số, dấu gạch ngang và gạch dưới."
+        fi
+    done
     
-    print_message "Cấu hình:"
-    echo "  - App: $APP_NAME tại $APP_DIR"
+    # Domain Name
+    while true; do
+        read -p "🌐 Nhập domain name (ví dụ: example.com): " DOMAIN_NAME
+        if [[ -n "$DOMAIN_NAME" ]]; then
+            break
+        else
+            print_error "Domain không được để trống."
+        fi
+    done
+    
+    # Email
+    while true; do
+        read -p "📧 Nhập email cho Let's Encrypt SSL: " EMAIL
+        if [[ -n "$EMAIL" && "$EMAIL" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+            break
+        else
+            print_error "Email không hợp lệ."
+        fi
+    done
+    
+    # Flask Port
+    while true; do
+        read -p "🔌 Nhập port cho Flask app (mặc định 5000): " FLASK_PORT
+        FLASK_PORT=${FLASK_PORT:-5000}
+        if [[ "$FLASK_PORT" =~ ^[0-9]+$ ]] && [ "$FLASK_PORT" -ge 1024 ] && [ "$FLASK_PORT" -le 65535 ]; then
+            break
+        else
+            print_error "Port phải là số từ 1024 đến 65535."
+            FLASK_PORT=""
+        fi
+    done
+    
+    # Service User
+    while true; do
+        read -p "👤 Nhập username cho service (mặc định: $APP_NAME-user): " SERVICE_USER
+        SERVICE_USER=${SERVICE_USER:-"$APP_NAME-user"}
+        if [[ "$SERVICE_USER" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            break
+        else
+            print_error "Username không hợp lệ."
+            SERVICE_USER=""
+        fi
+    done
+    
+    # Workers
+    while true; do
+        read -p "⚙️  Số lượng Gunicorn workers (mặc định 3): " WORKERS
+        WORKERS=${WORKERS:-3}
+        if [[ "$WORKERS" =~ ^[0-9]+$ ]] && [ "$WORKERS" -ge 1 ] && [ "$WORKERS" -le 10 ]; then
+            break
+        else
+            print_error "Số workers phải từ 1 đến 10."
+            WORKERS=""
+        fi
+    done
+    
+    echo ""
+    print_message "📋 Thông tin cấu hình đã nhập:"
+    echo "  - App Name: $APP_NAME"
+    echo "  - App Directory: $APP_DIR"
     echo "  - Domain: $DOMAIN_NAME"
     echo "  - Email: $EMAIL"
-    echo "  - Port: $FLASK_PORT"
-    echo "  - User: $SERVICE_USER"
+    echo "  - Flask Port: $FLASK_PORT"
+    echo "  - Service User: $SERVICE_USER"
     echo "  - Workers: $WORKERS"
+    echo ""
+    
+    while true; do
+        read -p "✅ Xác nhận triển khai với cấu hình trên? (y/n): " confirm
+        case $confirm in
+            [Yy]* ) break;;
+            [Nn]* ) 
+                print_error "Đã hủy bỏ triển khai."
+                exit 1;;
+            * ) print_warning "Vui lòng nhập 'y' để tiếp tục hoặc 'n' để hủy.";;
+        esac
+    done
 }
 
 # Update system
