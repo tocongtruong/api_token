@@ -8,5 +8,9 @@ wget https://raw.githubusercontent.com/tocongtruong/api_token/main/deploy_caddy.
 # Cấp quyền thực thi
 chmod +x deploy.sh
 
+chmod +x deploy_caddy.sh
+
 # Chạy script
 ./deploy.sh
+
+./deploy_caddy.sh
