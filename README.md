@@ -1,7 +1,8 @@
 # Download script từ GitHub
-##Cách 1: Với Ngnix
+***Cách 1: Với Ngnix
 wget https://raw.githubusercontent.com/tocongtruong/api_token/main/deploy.sh
-##Cách 2: Với Caddy
+
+***Cách 2: Với Caddy
 wget https://raw.githubusercontent.com/tocongtruong/api_token/main/deploy_caddy.sh
 
 # Cấp quyền thực thi
