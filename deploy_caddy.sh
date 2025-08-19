@@ -37,7 +37,8 @@ PROJECT_PATH="/home/$USER/$PROJECT_NAME"
 GIT_REPO="https://github.com/tocongtruong/api_token.git"
 SERVICE_NAME="flask-${PROJECT_NAME}"
 
-echo\ nlog_info "Tóm tắt:"
+echo
+log_info "Tóm tắt:"
 echo "  Thư mục:   $PROJECT_PATH"
 echo "  Domain:    $DOMAIN"
 echo "  App port:  $APP_PORT (lắng nghe 0.0.0.0)"
@@ -195,7 +196,8 @@ else
   log_warn "Bỏ qua restart Caddy theo yêu cầu."
 fi
 
-echo\ nlog_info "Hoàn tất!"
+echo
+log_info "Hoàn tất!"
 echo "  📁 Project:     ${PROJECT_PATH}"
 echo "  🌐 Domain:      https://${DOMAIN}"
 echo "  🔌 App (local): http://127.0.0.1:${APP_PORT}/"
