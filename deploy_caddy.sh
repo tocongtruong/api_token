@@ -37,11 +37,10 @@ PROJECT_PATH="/home/$USER/$PROJECT_NAME"
 GIT_REPO="https://github.com/tocongtruong/api_token.git"
 SERVICE_NAME="flask-${PROJECT_NAME}"
 
-echo
-log_info "Tóm tắt:"
+echo\ nlog_info "Tóm tắt:"
 echo "  Thư mục:   $PROJECT_PATH"
 echo "  Domain:    $DOMAIN"
-echo "  App port:  $APP_PORT (chỉ nội bộ 127.0.0.1)"
+echo "  App port:  $APP_PORT (lắng nghe 0.0.0.0)"
 echo "  Caddyfile: $CADDYFILE"
 echo
 
@@ -51,7 +50,7 @@ sudo apt update -y
 sudo apt install -y python3 python3-venv python3-pip git ufw curl
 
 # ===== Firewall =====
-log_info "Cấu hình UFW (mở 80/443, chặn $APP_PORT)..."
+log_info "Cấu hình UFW (mở 80/443, chặn $APP_PORT từ bên ngoài)..."
 sudo ufw --force enable || true
 sudo ufw allow 80,443/tcp || true
 sudo ufw deny ${APP_PORT}/tcp || true
@@ -82,7 +81,7 @@ fi
 # ===== Gunicorn config =====
 log_info "Tạo gunicorn_config.py..."
 cat > gunicorn_config.py <<EOF
-bind = "127.0.0.1:${APP_PORT}"
+bind = "0.0.0.0:${APP_PORT}"
 workers = 2
 worker_class = "gthread"
 threads = 8
@@ -126,10 +125,10 @@ fi
 
 # ===== Test local health =====
 log_info "Kiểm tra endpoint nội bộ..."
-if curl -sS --max-time 5 "http://127.0.0.1:${APP_PORT}/" | grep -qi "ok"; then
+if curl -sS --max-time 5 "http://127.0.0.1:${APP_PORT}/health" | grep -qi "ok"; then
   log_info "✅ Endpoint nội bộ OK."
 else
-  log_warn "⚠️ Không thấy phản hồi /health. Vẫn tiếp tục (có thể app không có route /health)."
+  log_warn "⚠️ Không thấy phản hồi /health. Vẫn tiếp tục."
 fi
 
 # ===== Caddyfile update =====
@@ -153,7 +152,7 @@ EOF
   cat >> "$CADDYFILE" <<EOF
 ${DOMAIN} {
     encode zstd gzip
-    reverse_proxy 127.0.0.1:${APP_PORT}
+    reverse_proxy host.docker.internal:${APP_PORT}
     # Optional security headers
     header {
         X-Frame-Options "DENY"
@@ -165,21 +164,27 @@ EOF
   log_info "Đã append block cho ${DOMAIN}."
 fi
 
+# ===== Ensure extra_hosts for Caddy =====
+COMPOSE_FILE="$(dirname $CADDYFILE)/docker-compose.yml"
+if [ -f "$COMPOSE_FILE" ]; then
+  if ! grep -q "host.docker.internal:host-gateway" "$COMPOSE_FILE"; then
+    log_info "Thêm extra_hosts cho Caddy trong docker-compose.yml..."
+    sed -i '/caddy:/a\    extra_hosts:\n      - "host.docker.internal:host-gateway"' "$COMPOSE_FILE"
+  fi
+fi
+
 # ===== Restart/Reload Caddy in Docker =====
 if [[ "$RESTART_CADDY" =~ ^[Yy]$ ]]; then
   log_info "Thử restart Caddy container..."
-  # Cách 1: nếu container tên 'caddy'
   if docker ps --format '{{.Names}}' | grep -q '^caddy$'; then
     docker restart caddy || true
   else
-    # Cách 2: docker compose (tự động tìm file compose ở thư mục hiện tại của Caddyfile)
     CADDY_DIR=$(dirname "$CADDYFILE")
     if [ -f "${CADDY_DIR}/docker-compose.yml" ] || [ -f "${CADDY_DIR}/docker-compose.yaml" ]; then
       ( cd "$CADDY_DIR" && docker compose restart caddy ) || true
     else
-      # Cách 3: thử exec validate nếu mount chuẩn
       if docker ps --format '{{.Names}}' | grep -q 'caddy'; then
-        docker exec -it caddy caddy validate --config /etc/caddy/Caddyfile || true
+        docker exec caddy caddy validate --config /etc/caddy/Caddyfile || true
         docker restart caddy || true
       else
         log_warn "Không xác định được container Caddy. Hãy tự restart caddy bằng docker compose."
@@ -190,8 +195,7 @@ else
   log_warn "Bỏ qua restart Caddy theo yêu cầu."
 fi
 
-echo
-log_info "Hoàn tất!"
+echo\ nlog_info "Hoàn tất!"
 echo "  📁 Project:     ${PROJECT_PATH}"
 echo "  🌐 Domain:      https://${DOMAIN}"
 echo "  🔌 App (local): http://127.0.0.1:${APP_PORT}/"
