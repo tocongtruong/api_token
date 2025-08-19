@@ -3,7 +3,7 @@
 wget https://raw.githubusercontent.com/tocongtruong/api_token/main/deploy.sh
 
 ***Cách 2: Với Caddy:
-wget https://raw.githubusercontent.com/tocongtruong/api_token/main/deploy_caddy.sh
+wget https://raw.githubusercontent.com/tocongtruong/api_token/refs/heads/main/deploy_caddy.sh
 
 # Cấp quyền thực thi
 chmod +x deploy.sh
